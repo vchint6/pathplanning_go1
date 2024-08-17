@@ -1,5 +1,5 @@
 # pathplanning_go1
 
 # Install
-1. open manipulator install
-   https://github.com/unitreerobotics/unitree_ros
+1. Unitree Go1 install
+2. https://github.com/unitreerobotics/unitree_ros
