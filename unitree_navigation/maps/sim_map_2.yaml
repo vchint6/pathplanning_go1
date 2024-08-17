@@ -1,7 +1,0 @@
-image: /home/ros-vm/catkin_ws/src/unitree_guide/unitree_navigation/maps/sim_map_2.pgm
-resolution: 0.050000
-origin: [-3.100000, -7.900000, 0.000000]
-negate: 0
-occupied_thresh: 0.65
-free_thresh: 0.196
-
