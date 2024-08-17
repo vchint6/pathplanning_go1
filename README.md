@@ -11,7 +11,7 @@
 8. Build (catkin_make)
 
 
-# Simulation
+# Navigation in Simulation World
 1. launch the simulation world -
    ```bash
    roslaunch unitree_navigation my_gazebo.launch
@@ -28,7 +28,7 @@
    ```bash
    roslaunch unitree_navigation my_navigation.launch
 
-# Ball tracking Simulation
+# Ball tracking Simulation World
 1. run commands upto navigation in separate terminals
    ```bash
    rosrun opencv detect_ball.py --ros-args -p image_in:=/camera_face/color/image_raw
@@ -37,7 +37,9 @@
 
 
 # Manipulator Controller
-1. launch manipulator controller - roslaunch open_manipulator_controller open_manipulator_controller.launch use_platform:=false
-2. run manipulator gui contoller - roslaunch open_manipulator_control_gui open_manipulator_control_gui.launch
-   
-
+1. launch manipulator controller -
+   ```bash
+   roslaunch open_manipulator_controller open_manipulator_controller.launch use_platform:=false
+3. run manipulator gui contoller -
+   ```bash
+   roslaunch open_manipulator_control_gui open_manipulator_control_gui.launch
