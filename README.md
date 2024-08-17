@@ -1,6 +1,12 @@
 # pathplanning_go1
+1. Unitree Go1 quadruped connected to host PC via LAN
+2. Slamtech Lidar connected to Head Nano 3
+3. Open Manipulator-X connected to Head Nano 2
+   ![image](https://github.com/user-attachments/assets/2aa1f43d-e5a2-4d2f-92c1-60d95b354887)
+   ![image](https://github.com/user-attachments/assets/b4b7849f-63d9-46bf-9c75-2e389303ed14)
+   ![image](https://github.com/user-attachments/assets/c54d074c-8ae6-4356-9d93-323d8a5af9f3)
 
-# System Setup
+# Host PC Setup
 1. Ubuntu 18.04
 2. Install [ROS](http://wiki.ros.org/) Melodic.
 3. Create your own catkin_ws and clone the repositories.
