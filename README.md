@@ -12,11 +12,21 @@
 
 
 # Simulation
-1. launch the simulation world - roslaunch unitree_navigation my_gazebo.launch
-2. run the go1 controller - ./devel/lib/unitree_guide/junior_ctrl
-3. launch the SLAM for mapping - roslaunch unitree_navigation my_slam.launch
-4. save map - rosrun map_server map_saver -f ~/catkin_ws/src/unitree_guide/unitree_navigation/maps/sim_map
-5. launch navigation file - roslaunch unitree_navigation my_navigation.launch
+1. launch the simulation world -
+   ```bash
+   roslaunch unitree_navigation my_gazebo.launch
+3. run the go1 controller -
+   ```bash
+   ./devel/lib/unitree_guide/junior_ctrl
+5. launch the SLAM for mapping -
+   ```bash
+   roslaunch unitree_navigation my_slam.launch
+7. save map -
+   ```bash
+   rosrun map_server map_saver -f ~/catkin_ws/src/unitree_guide/unitree_navigation/maps/sim_map
+9. launch navigation file -
+   ```bash
+   roslaunch unitree_navigation my_navigation.launch
 
 
 # Ball tracking Simulation
