@@ -28,12 +28,12 @@
    ```bash
    roslaunch unitree_navigation my_navigation.launch
 
-
 # Ball tracking Simulation
 1. run commands upto navigation in separate terminals
-2. rosrun opencv detect_ball.py --ros-args -p image_in:=/camera_face/color/image_raw
-3. rosrun opencv detect_ball_3d.py
-4. rosrun opencv follow_ball.py
+   ```bash
+   rosrun opencv detect_ball.py --ros-args -p image_in:=/camera_face/color/image_raw
+   rosrun opencv detect_ball_3d.py
+   rosrun opencv follow_ball.py
 
 
 # Manipulator Controller
