@@ -2,9 +2,12 @@
 1. Unitree Go1 quadruped connected to host PC via LAN
 2. Slamtech Lidar connected to Head Nano 3
 3. Open Manipulator-X connected to Head Nano 2
+4. Go1 Camera, LiDAR, Open Manipulator, Host PC all on same network (ROS Multimachine Setup)
+   
    ![image](https://github.com/user-attachments/assets/2aa1f43d-e5a2-4d2f-92c1-60d95b354887)
    ![image](https://github.com/user-attachments/assets/b4b7849f-63d9-46bf-9c75-2e389303ed14)
    ![image](https://github.com/user-attachments/assets/c54d074c-8ae6-4356-9d93-323d8a5af9f3)
+
 
 # Host PC Setup
 1. Ubuntu 18.04
@@ -49,3 +52,7 @@
 3. run manipulator gui contoller -
    ```bash
    roslaunch open_manipulator_control_gui open_manipulator_control_gui.launch
+
+# Go1 Head Nano Setup
+1. Head Nano 2 - open manipulator install: https://github.com/ROBOTIS-GIT/open_manipulator
+2. Head Nano 1 - UnitreeCameraSDK install and stream vedio on Host PC IP
