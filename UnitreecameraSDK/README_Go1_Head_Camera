@@ -1,0 +1,4 @@
+To access head camera node (unitree@192.168.123.13) you can ssh via two methods:
+
+1. On Digit Computer user: digit2: ssh go1 (password: unitreego1)
+2. ssh unitree@192.168.123.13; password: 123
