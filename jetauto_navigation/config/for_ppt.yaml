@@ -1,0 +1,21 @@
+
+TebLocalPlannerROS:
+  max_vel_x: 0.3  
+  max_vel_y: 0.0  
+  max_vel_x_backwards: 0.2 
+  max_vel_theta: 0.2  
+  acc_lim_x: 0.2  
+  acc_lim_y: 0.0 
+  acc_lim_theta: 0.2 
+  min_turning_radius: 0 
+ 
+  footprint_model: 
+    types: "polygon"
+    #vertices: [[-0.45, -0.175], [-0.45, 0.175], [0.45, 0.175], [0.45, -0.175]]
+
+  xy_goal_tolerance: 0.05 
+  yaw_goal_tolerance: 0.1 
+
+  min_obstacle_dist: 0.25 
+  inflation_dist: 0.25
+ 
