@@ -1,0 +1,240 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+################################################################################
+# Copyright 2018 ROBOTIS CO., LTD.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+import threading
+import rospy
+import numpy as np
+import subprocess
+import os
+import sys
+from enum import Enum
+from std_msgs.msg import UInt8, Float32MultiArray
+from tf.transformations import *
+import tf
+from PySide import QtCore, QtGui, QtOpenGL
+from sensor_msgs.msg import JointState, CameraInfo
+from geometry_msgs.msg import PoseStamped, Pose, Point, Twist
+from math import pow, atan2, sqrt
+from gazebo_msgs.msg import ModelState, ModelStates
+
+# Manipulator
+from open_manipulator_msgs.msg import JointPosition
+from open_manipulator_msgs.msg import KinematicsPose
+from open_manipulator_msgs.msg import OpenManipulatorState
+from open_manipulator_msgs.srv import SetJointPosition
+from open_manipulator_msgs.srv import SetKinematicsPose
+from open_manipulator_msgs.srv import GetJointPosition
+from open_manipulator_msgs.srv import GetKinematicsPose
+from open_manipulator_msgs.srv import SetActuatorState
+
+import math
+import time
+
+MOVE_INIT = 0
+MOVE_LEFT = 1
+MOVE_RIGHT_UP = 2
+MOVE_LEFT_DOWN = 3
+MOVE_FORWARD = 4
+MOVE_BACKWARD = 5
+
+class TrakingObject:
+    def __init__(self):
+        self.CurrentMode = Enum('CurrentMode', 'init tracking_object')
+        
+        self.listener = tf.TransformListener()
+        self.jointStates = [0.0] * 10
+        self.open_manipulator_moving_state = "STOPPED"
+        self.current_mode = self.CurrentMode.init.value
+        self.objectPose = PoseStamped()
+        self.targetPose = PoseStamped()
+        self.is_triggered = False
+        self.currentToolPose = Pose()
+        self.imgHeight = 0
+        self.imgWidth = 0
+        self.stateObject = MOVE_INIT
+        self.use_platform = rospy.get_param("~use_platform", "true")
+        
+        self.set_joint_position = rospy.ServiceProxy('goal_joint_space_path', SetJointPosition)
+        self.set_kinematics_position = rospy.ServiceProxy('goal_task_space_path_position_only', SetKinematicsPose)
+        self.set_kinematics_position_from_present = rospy.ServiceProxy('goal_task_space_path_from_present_position_only', SetKinematicsPose)
+        self.set_joint_position_from_present = rospy.ServiceProxy('goal_joint_space_path_from_present', SetJointPosition)
+        self.set_actuator_state = rospy.ServiceProxy('set_actuator_state', SetActuatorState)
+        self.set_gripper_control = rospy.ServiceProxy('goal_tool_control', SetJointPosition)
+
+        self.open_manipulator_joint_states_sub_ = rospy.Subscriber('joint_states', JointState, self.jointStatesCallback)
+        self.open_manipulator_kinematics_pose_sub_ = rospy.Subscriber('gripper/kinematics_pose', KinematicsPose, self.kinematicsPoseCallback)
+        self.open_manipulator_states_sub = rospy.Subscriber('states', OpenManipulatorState, self.statesCallback)
+
+        self.desired_end_effector_pos = Point()
+        self.end_effector_pos_sub = rospy.Subscriber('/3d_ball', Point, self.endEffectorPosCallback)
+        self.pub_model = rospy.Publisher('gazebo/set_model_state', ModelState, queue_size=1)
+
+        rospy.sleep(1)
+
+        # actuator enable
+        self.actuatorTorque(True)
+        self.setInitPose()
+        
+        loop_rate = rospy.Rate(10)  # 10hz
+
+
+        while not rospy.is_shutdown():
+            if self.is_triggered:
+                self.handleUserInput()
+            loop_rate.sleep()
+
+    def handleUserInput(self):
+        while not rospy.is_shutdown():
+            print("Enter command:\n1: Manipulator to initial position\n2: End-effector to target position\n3: Open gripper\n4: Close gripper\nq: Quit")
+            user_input = raw_input("Enter command: ")  # Use raw_input() for Python 2.7
+
+            if user_input == '1':
+                self.setInitPose()
+            elif user_input == '2':
+                try:
+                    target_x = float(raw_input("Enter target x: "))
+                    target_y = float(raw_input("Enter target y: "))
+                    target_z = float(raw_input("Enter target z: "))
+                    self.setTargetPose(target_x, target_y, target_z)
+                except ValueError:
+                    print("Invalid input. Please enter numeric values for the coordinates.")
+            elif user_input == '3':
+                self.OpenGripper()
+            elif user_input == '4':
+                self.CloseGripper()
+            elif user_input.lower() == 'q':
+                rospy.signal_shutdown("User requested shutdown.")
+                break
+            else:
+                print("Invalid command.")
+
+    def endEffectorPosCallback(self, msg):
+        self.desired_end_effector_pos = msg
+
+    
+
+    def actuatorTorque(self, enable):
+        rospy.logwarn("actuatorTorque")
+        try:
+            resp = self.set_actuator_state(enable)
+            rospy.sleep(1)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+            return False
+        if not resp:
+            rospy.loginfo("set_actuator enable fail")
+        return resp
+
+    def setInitPose(self):
+        rospy.logwarn("setInitPose")
+        joint_position = JointPosition()
+        joint_position.joint_name = ['joint1', 'joint2', 'joint3', 'joint4']
+        #joint_position.position = [0.0, -1.05, 0.35, 0.70]
+        joint_position.position = [0.0, 0.0, 0.0, 0.0]
+        resp = False
+        try:
+            path_time = 2
+            resp = self.set_joint_position("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def setTargetPose(self, target_x, target_y, target_z):
+        rospy.logwarn("setTargetPose")
+
+        joint_position = JointPosition()
+        joint_position.joint_name = ['gripper']
+        joint_position.position = [0.01]
+        resp = False
+        try:
+            path_time = 1
+            resp = self.set_gripper_control("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        if not resp:
+            return False
+
+        kinematics_pose = KinematicsPose()
+        kinematics_pose.pose.position.x = target_x
+        kinematics_pose.pose.position.y = target_y
+        kinematics_pose.pose.position.z = target_z
+
+        try:
+            path_time = 2
+            resp = self.set_kinematics_position("gripper", "gripper", kinematics_pose, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def CloseGripper(self):
+        rospy.logwarn("close gripper")
+
+        joint_position = JointPosition()
+        joint_position.joint_name = ['gripper']
+        joint_position.position = [-0.01]
+        resp = False
+        try:
+            path_time = 1
+            resp = self.set_gripper_control("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def OpenGripper(self):
+        rospy.logwarn("open gripper")
+
+        joint_position = JointPosition()
+        joint_position.joint_name = ['gripper']
+        joint_position.position = [0.01]
+        resp = False
+        try:
+            path_time = 1
+            resp = self.set_gripper_control("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def kinematicsPoseCallback(self, msg):
+        self.currentToolPose.position.x = msg.pose.position.x
+        self.currentToolPose.position.y = msg.pose.position.y
+        self.currentToolPose.position.z = msg.pose.position.z
+
+    def jointStatesCallback(self, msg):
+        self.is_triggered = True
+        self.jointStates = [pose for pose in msg.position]
+
+    def statesCallback(self, msg):
+        self.open_manipulator_moving_state = msg.open_manipulator_moving_state
+
+def main():
+    rospy.init_node('tracking_controller')
+    rospy.loginfo("tracking_controller")
+    try:
+        trakingObject = TrakingObject()
+    except rospy.ROSInterruptException:
+        pass
+
+if __name__ == '__main__':
+    main()
+
+

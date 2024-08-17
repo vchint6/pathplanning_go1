@@ -1,0 +1,416 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import threading
+import rospy
+import numpy as np
+import subprocess
+import os
+import sys
+from enum import Enum
+from std_msgs.msg import UInt8, Float32MultiArray
+from tf.transformations import *
+import tf
+import actionlib
+from PySide import QtCore, QtGui, QtOpenGL
+from sensor_msgs.msg import JointState, CameraInfo
+from geometry_msgs.msg import PoseStamped, Pose, Point, Twist
+from math import pow, atan2, sqrt
+from gazebo_msgs.msg import ModelState, ModelStates
+from nav_msgs.srv import GetPlan, GetPlanRequest, GetPlanResponse
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from actionlib_msgs.msg import GoalStatus
+
+# Manipulator
+from open_manipulator_msgs.msg import JointPosition
+from open_manipulator_msgs.msg import KinematicsPose
+from open_manipulator_msgs.msg import OpenManipulatorState
+from open_manipulator_msgs.srv import SetJointPosition
+from open_manipulator_msgs.srv import SetKinematicsPose
+from open_manipulator_msgs.srv import GetJointPosition
+from open_manipulator_msgs.srv import GetKinematicsPose
+from open_manipulator_msgs.srv import SetActuatorState
+from open_manipulator_msgs.srv import SetDrawingTrajectory
+
+import math
+import time
+import random
+
+MOVE_INIT = 0
+MOVE_LEFT = 1
+MOVE_RIGHT_UP = 2
+MOVE_LEFT_DOWN = 3
+MOVE_FORWARD = 4
+MOVE_BACKWARD = 5
+
+
+
+class TrakingObject:
+    def __init__(self):
+        self.CurrentMode = Enum('CurrentMode', 'init tracking_object')
+        
+        self.listener = tf.TransformListener()
+        self.jointStates = [0.0] * 10
+        self.open_manipulator_moving_state = "STOPPED"
+        self.current_mode = self.CurrentMode.init.value
+        self.objectPose = PoseStamped()
+        self.targetPose = PoseStamped()
+        self.is_triggered = False
+        self.currentToolPose = Pose()
+        self.imgHeight = 0
+        self.imgWidth = 0
+        self.stateObject = MOVE_INIT
+        self.use_platform = rospy.get_param("~use_platform", "true")
+        
+        self.set_joint_position = rospy.ServiceProxy('goal_joint_space_path', SetJointPosition)
+        self.set_kinematics_position = rospy.ServiceProxy('goal_task_space_path_position_only', SetKinematicsPose)
+        self.set_kinematics_position_from_present = rospy.ServiceProxy('goal_task_space_path_from_present_position_only', SetKinematicsPose)
+        self.set_joint_position_from_present = rospy.ServiceProxy('goal_joint_space_path_from_present', SetJointPosition)
+        self.set_actuator_state = rospy.ServiceProxy('set_actuator_state', SetActuatorState)
+        self.set_gripper_control = rospy.ServiceProxy('goal_tool_control', SetJointPosition)
+        self.set_drawing_trajectory = rospy.ServiceProxy('goal_drawing_trajectory', SetDrawingTrajectory)
+
+        self.open_manipulator_joint_states_sub_ = rospy.Subscriber('joint_states', JointState, self.jointStatesCallback)
+        self.open_manipulator_kinematics_pose_sub_ = rospy.Subscriber('gripper/kinematics_pose', KinematicsPose, self.kinematicsPoseCallback)
+        self.open_manipulator_states_sub = rospy.Subscriber('states', OpenManipulatorState, self.statesCallback)
+        self.gazebo_model_states_sub = rospy.Subscriber('/gazebo/model_states', ModelStates, self.modelStatesCallback)
+
+        self.pub_model = rospy.Publisher('gazebo/set_model_state', ModelState, queue_size=1)
+
+        rospy.sleep(1)
+
+        # actuator enable
+        self.actuatorTorque(True)
+        self.setJointPose(0, -1.05, 0.35, 0.70)
+        
+        loop_rate = rospy.Rate(10)  # 10hz
+
+        while not rospy.is_shutdown():
+            if self.is_triggered:
+                self.handleUserInput()
+            loop_rate.sleep()
+
+    def handleUserInput(self):
+        while not rospy.is_shutdown():
+            print("Enter command:\n1: Manipulator to initial position\n2: End-effector to target position\n3: Open gripper\n4: Close gripper\n5: Send navigation goal\nq: Quit")
+            user_input = raw_input("Enter command: ")  # Use raw_input() for Python 2.7
+
+            if user_input == '1':
+                joint1 = 0
+                joint2 = 0
+                joint3 = 0
+                joint4 = 0
+                self.setJointPose(joint1, joint2, joint3, joint4)
+            elif user_input == '2':
+                try:
+                    end_effector_x = float(raw_input("Enter end_effector x: "))
+                    end_effector_y = float(raw_input("Enter end_effector y: "))
+                    end_effector_z = float(raw_input("Enter end_effector z: "))
+                    
+
+                    # Define the set of angles
+                    angles = [0, 30, 45, 60, 90, 120, 135, 150, 180, 210, 225, 240, 270, 300, 315, 330]
+
+                    # Iterate over each angle to find a feasible path
+                    path_found = False
+                    for theta in angles:
+                        theta += 90  # Adjust the angle as needed
+
+                        # Calculate x_goal and y_goal
+                        theta_radians = math.radians(theta)
+                        x_goal = 0.25 * math.sin(theta_radians) + end_effector_x
+                        y_goal = 0.25    * math.cos(theta_radians) + end_effector_y
+                        print("Attempting goal with x: {:.2f}, y: {:.2f}, theta: {:.2f}".format(x_goal, y_goal, theta))
+
+                        # Convert theta to quaternion components
+                        z_goal, w_goal = self.convertAngleToQuaternion(theta)
+                        
+                        # Check if the path is feasible
+                        if self.isPathFeasible(x_goal, y_goal, z_goal, w_goal):
+                            self.navigateToGoal(x_goal, y_goal, theta)
+                            self.OpenGripper()
+                            self.Transpose_client("line", -0.286, 0.270, -0.145, 2)
+
+                            # Calculate distance between current end effector and the ball
+                            ball_position = self.getModelPosition("tennis_ball_0")
+                            end_effector_position = self.getEndEffectorPosition()
+
+                            if ball_position and end_effector_position:
+                                delta_x, delta_y, delta_z = self.transformBallPositionToLink1(ball_position)
+                                print("delta x: {:.2f}, y: {:.2f}".format(delta_x, delta_y))
+                                self.Transpose_client("line", delta_x, delta_y, 0 , 2)
+                                self.CloseGripper()
+                                self.setJointPose(0, 0, 0, 0) 
+                                path_found = True
+                                break  # Exit the loop once a feasible path is found
+                    
+                    if not path_found:
+                        print("No feasible path found with any angle.")
+                except ValueError:
+                    print("Invalid input. Please enter numeric values for the coordinates.")
+        
+            elif user_input == '3':
+                self.OpenGripper()
+            elif user_input == '4':
+                self.CloseGripper()
+            elif user_input == '5':
+                try:
+                    target_x = float(raw_input("Enter target x-coordinate: "))
+                    target_y = float(raw_input("Enter target y-coordinate: "))
+                    angle_degrees = float(raw_input("Enter target orientation in degrees: "))
+                    self.navigateToGoal(target_x, target_y, angle_degrees)
+                except ValueError:
+                    print("Invalid input. Please enter numeric values.")
+            elif user_input.lower() == 'q':
+                rospy.signal_shutdown("User requested shutdown.")
+                break
+            else:
+                print("Invalid command.")
+
+    def getModelPosition(self, model_name):
+        try:
+            model_states = rospy.wait_for_message('/gazebo/model_states', ModelStates, timeout=5)
+            if model_name in model_states.name:
+                index = model_states.name.index(model_name)
+                return model_states.pose[index].position
+            else:
+                print("Model {} not found in Gazebo".format(model_name))
+                return None
+        except rospy.ROSException as e:
+            print("Failed to get model position: %s" % e)
+            return None
+
+    def getEndEffectorPosition(self):
+        return self.currentToolPose.position
+
+    def transformBallPositionToLink1(self, ball_position):
+        try:
+            self.listener.waitForTransform('/link1', '/map', rospy.Time(0), rospy.Duration(4.0))
+            (trans, rot) = self.listener.lookupTransform('/link1', '/map', rospy.Time(0))
+            transform_matrix = self.listener.fromTranslationRotation(trans, rot)
+            ball_position_world = np.array([ball_position.x, ball_position.y, ball_position.z, 1.0])
+            ball_position_link1 = np.dot(transform_matrix, ball_position_world)
+            return ball_position_link1[0], ball_position_link1[1], ball_position_link1[2]
+        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+            print("Transform error: %s" % e)
+            return None, None, None
+
+    
+    def actuatorTorque(self, enable):
+        rospy.logwarn("actuatorTorque")
+        try:
+            resp = self.set_actuator_state(enable)
+            rospy.sleep(1)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+            return False
+        if not resp:
+            rospy.loginfo("set_actuator enable fail")
+        return resp
+
+    def setJointPose(self, joint1, joint2, joint3, joint4):
+        rospy.logwarn("setJointPose")
+        joint_position = JointPosition()
+        joint_position.joint_name = ['joint1', 'joint2', 'joint3', 'joint4']
+        joint_position.position = [joint1, joint2, joint3, joint4]
+        resp = False
+        try:
+            path_time = 2
+            resp = self.set_joint_position("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def setTargetPose(self, end_effector_x, end_effector_y, end_effector_z):
+        rospy.logwarn("setTargetPose")
+
+        joint_position = JointPosition()
+        joint_position.joint_name = ['gripper']
+        joint_position.position = [0.01]
+        resp = False
+        try:
+            path_time = 1
+            resp = self.set_gripper_control("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        if not resp:
+            return False
+
+        kinematics_pose = KinematicsPose()
+        kinematics_pose.pose.position.x = end_effector_x
+        kinematics_pose.pose.position.y = end_effector_y
+        kinematics_pose.pose.position.z = end_effector_z
+
+        try:
+            path_time = 2
+            resp = self.set_kinematics_position("gripper", "gripper", kinematics_pose, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def Transpose_client(self, name, x, y, z, path_time):
+        
+        resp = False
+        try:
+            
+            
+            resp = self.set_drawing_trajectory("gripper", name, [x, y, z], path_time)
+            rospy.sleep(path_time)
+            
+        except rospy.ServiceException as e:
+            print("Service call failed:", e)
+        return resp
+
+    def CloseGripper(self):
+        rospy.logwarn("close gripper")
+
+        joint_position = JointPosition()
+        joint_position.joint_name = ['gripper']
+        joint_position.position = [-0.01]
+        resp = False
+        try:
+            path_time = 1
+            resp = self.set_gripper_control("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def OpenGripper(self):
+        rospy.logwarn("open gripper")
+
+        joint_position = JointPosition()
+        joint_position.joint_name = ['gripper']
+        joint_position.position = [0.01]
+        resp = False
+        try:
+            path_time = 1
+            resp = self.set_gripper_control("", joint_position, path_time)
+            rospy.sleep(path_time)
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+        return resp
+
+    def kinematicsPoseCallback(self, msg):
+        self.currentToolPose.position.x = msg.pose.position.x
+        self.currentToolPose.position.y = msg.pose.position.y
+        self.currentToolPose.position.z = msg.pose.position.z
+
+    def jointStatesCallback(self, msg):
+        self.is_triggered = True
+        self.jointStates = [pose for pose in msg.position]
+
+    def statesCallback(self, msg):
+        self.open_manipulator_moving_state = msg.open_manipulator_moving_state
+
+    def modelStatesCallback(self, msg):
+        self.model_states = msg
+
+    def navigateToGoal(self, target_x, target_y, angle_degrees):
+        try:
+            target_z, target_w = self.convertAngleToQuaternion(angle_degrees)
+            
+            if not self.isPathFeasible(target_x, target_y, target_z, target_w):
+                print("Path to the target is not feasible. It might be blocked by obstacles.")
+                return
+            
+            self.sendGoal(target_x, target_y, target_z, target_w)
+            
+            # Wait for the result
+            self.waitForResult()
+            
+        except ValueError:
+            print("Invalid input. Please enter numeric values.")
+
+    def convertAngleToQuaternion(self, angle_degrees):
+        angle_radians = math.radians(angle_degrees)
+        z = math.sin(angle_radians / 2.0)
+        w = math.cos(angle_radians / 2.0)
+        return z, w
+
+    def isPathFeasible(self, x, y, z, w):
+        try:
+            # Call the move_base service to get a path
+            rospy.wait_for_service('/move_base/make_plan')
+            make_plan = rospy.ServiceProxy('/move_base/make_plan', GetPlan)
+            
+            start = PoseStamped()
+            start.header.frame_id = "map"
+            start.header.stamp = rospy.Time.now()
+            start.pose.position.x = self.currentToolPose.position.x
+            start.pose.position.y = self.currentToolPose.position.y
+            start.pose.position.z = 0
+            start.pose.orientation = self.currentToolPose.orientation
+
+            goal = PoseStamped()
+            goal.header.frame_id = "map"
+            goal.header.stamp = rospy.Time.now()
+            goal.pose.position.x = x
+            goal.pose.position.y = y
+            goal.pose.position.z = 0
+            goal.pose.orientation.x = 0.0
+            goal.pose.orientation.y = 0.0
+            goal.pose.orientation.z = z
+            goal.pose.orientation.w = w
+            
+            tolerance = 0.5  # Define tolerance for the path planning
+            
+            req = GetPlanRequest()
+            req.start = start
+            req.goal = goal
+            req.tolerance = tolerance
+
+            resp = make_plan(req)
+            if not resp.plan.poses:
+                print("No path found to the target")
+                return False
+            else:
+                return True
+        except rospy.ServiceException as e:
+            print("Service call failed: %s" % e)
+            return False
+
+    def sendGoal(self, x, y, z, w):
+        self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+        self.client.wait_for_server()
+
+        goal = MoveBaseGoal()
+        goal.target_pose.header.frame_id = "map"
+        goal.target_pose.header.stamp = rospy.Time.now()
+        goal.target_pose.pose.position.x = x
+        goal.target_pose.pose.position.y = y
+        goal.target_pose.pose.position.z = 0  # Assuming flat terrain
+        goal.target_pose.pose.orientation.x = 0.0
+        goal.target_pose.pose.orientation.y = 0.0
+        goal.target_pose.pose.orientation.z = z
+        goal.target_pose.pose.orientation.w = w
+
+        rospy.loginfo("Sending goal to ({}, {}, {}, {})".format(x, y, z, w))
+        self.client.send_goal(goal)
+
+        rospy.loginfo("Goal sent successfully!")
+
+    def waitForResult(self):
+        self.client.wait_for_result()
+        result = self.client.get_state()
+        
+        if result == GoalStatus.SUCCEEDED:
+            rospy.loginfo("Goal reached successfully!")
+        else:
+            rospy.loginfo("Failed to reach goal, status: {}".format(result))
+
+def main():
+    rospy.init_node('tracking_controller')
+    rospy.loginfo("tracking_controller")
+    try:
+        trakingObject = TrakingObject()
+    except rospy.ROSInterruptException:
+        pass
+
+
+if __name__ == "__main__":
+    main()
+
