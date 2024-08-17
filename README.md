@@ -3,5 +3,8 @@
 # System Setup
 1. Ubuntu 18.04
 2. Install [ROS](http://wiki.ros.org/) Melodic.
-3. Unitree Go1 install: https://github.com/unitreerobotics/unitree_ros
-4. open manipulator install: https://github.com/ROBOTIS-GIT/open_manipulator
+3. Create your own catkin_ws and clone the repositories.
+4. Unitree Go1 install: https://github.com/unitreerobotics/unitree_ros
+5. open manipulator install: https://github.com/ROBOTIS-GIT/open_manipulator
+6. Slamtec LiDAR install: https://www.slamtec.com/cn/support#rplidar-mapper
+7. Build (catkin_make)
